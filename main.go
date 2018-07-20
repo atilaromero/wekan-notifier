@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ func main() {
 	mongoURL, ok := os.LookupEnv("MONGO_URL")
 	if !ok {
 		log.Fatalf("MONGO_URL not set. Example: MONGO_URL=mongodb://myserver:27017")
+		return
 	}
 	mongoDatabase, ok := os.LookupEnv("MONGO_DATABASE")
 	if !ok {
@@ -32,6 +34,7 @@ func main() {
 	client, err := mgo.Dial(mongoURL)
 	if err != nil {
 		log.Fatalf("could not connect to mongo database: %v\n", err)
+		return
 	}
 
 	collection := client.DB(mongoDatabase).C(mongoCollection)
@@ -41,6 +44,7 @@ func main() {
 
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatalf("could not start server: %v\n", err)
+		return
 	}
 }
 
@@ -55,7 +59,9 @@ func handler(collection *mgo.Collection) func(w http.ResponseWriter, r *http.Req
 		}{}
 		err := decoder.Decode(&event)
 		if err != nil {
-			log.Fatalf("error decoding request: %v\n", err)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "error decoding request: %v\n", err)
+			return
 		}
 
 		docs := make([]struct {
@@ -67,16 +73,27 @@ func handler(collection *mgo.Collection) func(w http.ResponseWriter, r *http.Req
 			bson.M{"path": event.Payload.EvidencePath},
 		).Limit(2).Select(bson.M{"path": 1}).All(&docs)
 		if err != nil {
-			log.Fatalf("error fetching database: %v\n", err)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "error fetching database: %v\n", err)
+			return
 		}
 		if len(docs) == 0 {
-			log.Fatalf("evidence not found in database: %v\n", event.Payload.EvidencePath)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "evidence not found in database: %v\n", event.Payload.EvidencePath)
+			return
 		}
 		if len(docs) > 1 {
-			log.Fatalf("multiple evidences found in database using same path: %v\n", event.Payload.EvidencePath)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "multiple evidences found in database using same path: %v\n", event.Payload.EvidencePath)
+			return
 		}
 
-		collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{"state": event.Type}})
+		err = collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{"state": event.Type}})
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "error updating state: %v\n", err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}
 }
