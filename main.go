@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
 
 	"github.com/globalsign/mgo"
 	"github.com/globalsign/mgo/bson"
@@ -38,37 +37,46 @@ func main() {
 	collection := client.DB(mongoDatabase).C(mongoCollection)
 
 	r := mux.NewRouter()
-	r.HandleFunc("/", getListTodo(collection)).Methods("GET")
+	r.HandleFunc("/", handler(collection)).Methods("POST")
 
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatalf("could not start server: %v\n", err)
 	}
 }
 
-func getListTodo(collection *mgo.Collection) func(w http.ResponseWriter, r *http.Request) {
+func handler(collection *mgo.Collection) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(r.Body)
+		event := struct {
+			Type    string `json:"type"`
+			Payload struct {
+				EvidencePath string `json:"evidencePath"`
+			} `json:"payload"`
+		}{}
+		err := decoder.Decode(&event)
+		if err != nil {
+			log.Fatalf("error decoding request: %v\n", err)
+		}
+
 		docs := make([]struct {
-			Path   string `bson:"path" json:"evidencePath"`
-			Output string `json:"outputPath"`
+			ID   bson.ObjectId `bson:"_id"`
+			Path string        `bson:"path"`
 		}, 0)
 
-		err := collection.Find(
-			bson.M{"state": "todo"},
-		).Limit(100).Select(bson.M{"path": 1}).All(&docs)
+		err = collection.Find(
+			bson.M{"path": event.Payload.EvidencePath},
+		).Limit(2).Select(bson.M{"path": 1}).All(&docs)
 		if err != nil {
 			log.Fatalf("error fetching database: %v\n", err)
 		}
-
-		for i := 0; i < len(docs); i++ {
-			docs[i].Output = path.Join(path.Dir(docs[i].Path), "SARD")
+		if len(docs) == 0 {
+			log.Fatalf("evidence not found in database: %v\n", event.Payload.EvidencePath)
+		}
+		if len(docs) > 1 {
+			log.Fatalf("multiple evidences found in database using same path: %v\n", event.Payload.EvidencePath)
 		}
 
-		docsJSON, err := json.Marshal(docs)
-		if err != nil {
-			log.Fatalf("error building json: %v\n", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
+		collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{"state": event.Type}})
 		w.WriteHeader(http.StatusOK)
-		w.Write(docsJSON)
 	}
 }
