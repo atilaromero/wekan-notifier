@@ -55,6 +55,7 @@ func handler(collection *mgo.Collection) func(w http.ResponseWriter, r *http.Req
 			Type    string `json:"type"`
 			Payload struct {
 				EvidencePath string `json:"evidencePath"`
+				Progress     string `json:"progress"`
 			} `json:"payload"`
 		}{}
 		err := decoder.Decode(&event)
@@ -88,12 +89,41 @@ func handler(collection *mgo.Collection) func(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		err = collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{"state": event.Type}})
-		if err != nil {
+		switch event.Type {
+		case "running":
+			err = collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{
+				"run_at": r.RemoteAddr,
+				"state":  event.Type,
+			}})
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "error updating state: %v\n", err)
+				return
+			}
+		case "done", "failed":
+			err = collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{
+				"state": event.Type,
+			}})
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "error updating state: %v\n", err)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case "progress":
+			err = collection.UpdateId(docs[0].ID, bson.M{"$set": bson.M{
+				"progress": event.Payload.Progress,
+			}})
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "error updating state: %v\n", err)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "error updating state: %v\n", err)
-			return
+			fmt.Fprintf(w, "unexpected type: %v\n", event.Type)
 		}
-		w.WriteHeader(http.StatusOK)
+
 	}
 }
