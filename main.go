@@ -105,12 +105,15 @@ func handler(cnf *config) func(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "error decoding request: %v\n", err)
+			log.Printf("error decoding request: %v\n", err)
 			return
 		}
 		card, err := findCard(cnf, event.Payload.EvidencePath)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "error findind card: %v\n", err)
+			log.Printf("error findind card: %v\n", err)
+			return
 		}
 
 		switch event.Type {
